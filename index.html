@@ -1,118 +1,54 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face ID Verification</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f5f5f7;
-        }
-        .container {
-            text-align: center;
-            background: white;
-            padding: 40px;
-            border-radius: 20px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-        }
-        button {
-            background-color: #0071e3;
-            color: white;
-            border: none;
-            padding: 15px 40px;
-            font-size: 18px;
-            font-weight: 600;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        button:active {
-            background-color: #005bb5;
-        }
-        #result {
-            margin-top: 30px;
-            font-size: 48px;
-            font-weight: bold;
-            min-height: 58px;
-        }
-        .yes { color: #34c759; }
-        .no { color: #ff3b30; }
-        .status { color: #8e8e93; font-size: 16px; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face ID проверка</title>
+<style>
+  body{font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#fff;text-align:center}
+  button{font-size:20px;padding:16px 32px;border:0;border-radius:14px;background:#0a84ff;color:#fff}
+  #r{margin-top:24px;font-size:22px;padding:0 16px}
+</style>
 </head>
 <body>
-
-<div class="container">
-    <button id="verifyBtn">Verify</button>
-    <div id="result"></div>
-</div>
-
+<button id="b">Проверить лицо</button>
+<div id="r"></div>
 <script>
-// Вспомогательные функции для перевода бинарных данных в строку и обратно
-function bufferToBase64url(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let string = '';
-    for (const b of bytes) string += String.fromCharCode(b);
-    return btoa(string).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
+const r = document.getElementById('r');
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
 
-function base64urlToBuffer(base64url) {
-    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-    const string = atob(base64);
-    const buffer = new ArrayBuffer(string.length);
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < string.length; i++) bytes[i] = string.charCodeAt(i);
-    return buffer;
-}
-
-const verifyBtn = document.getElementById('verifyBtn');
-const resultDiv = document.getElementById('result');
-
-verifyBtn.addEventListener('click', async () => {
-    resultDiv.className = 'status';
-    resultDiv.innerText = 'Ожидание Face ID...';
-    
-    // Создаем случайное имя пользователя для демо-сервера
-    const username = 'user_' + Math.random().toString(36).substring(7);
-
-    try {
-        // ШАГ 1: Запрашиваем у демо-сервера параметры для создания ключа
-        const registerArgsResponse = await fetch(`https://webauthn.io{username}&attestation=none&authenticatorUserVerification=required`);
-        const registerArgs = await registerArgsResponse.json();
-
-        // Форматируем данные для браузера
-        registerArgs.publicKey.challenge = base64urlToBuffer(registerArgs.publicKey.challenge);
-        registerArgs.publicKey.user.id = base64urlToBuffer(registerArgs.publicKey.user.id);
-        
-        // ШАГ 2: Вызываем системное окно Face ID на iPhone
-        const credential = await navigator.credentials.create({
-            publicKey: registerArgs.publicKey
-        });
-
-        // Если мы дошли до этой строчки — Face ID успешно сканировал лицо!
-        if (credential) {
-            resultDiv.className = 'yes';
-            resultDiv.innerText = 'yes';
-        } else {
-            resultDiv.className = 'no';
-            resultDiv.innerText = 'no';
-        }
-
-    } catch (error) {
-        // Если пользователь нажал «Отмена» или лицо не подошло
-        console.error(error);
-        resultDiv.className = 'no';
-        resultDiv.innerText = 'no';
+document.getElementById('b').onclick = async () => {
+  r.textContent = '';
+  if (!window.PublicKeyCredential) { r.textContent = '❌ WebAuthn не поддерживается'; return; }
+  try {
+    const saved = localStorage.getItem('cid');
+    if (!saved) {
+      // первый запуск: создаём ключ, iPhone просит Face ID
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge: rnd(32),
+        rp: { name: 'FaceID Check', id: location.hostname },
+        user: { id: rnd(16), name: 'user', displayName: 'user' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+        timeout: 60000
+      }});
+      localStorage.setItem('cid', b64(cred.rawId));
+      r.textContent = '✅ Лицо подтверждено (ключ создан)';
+    } else {
+      await navigator.credentials.get({ publicKey: {
+        challenge: rnd(32),
+        allowCredentials: [{ type: 'public-key', id: unb64(saved), transports: ['internal'] }],
+        userVerification: 'required',
+        timeout: 60000
+      }});
+      r.textContent = '✅ Лицо достоверно';
     }
-});
+  } catch (e) {
+    r.textContent = '❌ Не подтверждено';
+  }
+};
 </script>
-
 </body>
 </html>
